@@ -4238,7 +4238,7 @@ public class RequestDelegateFactoryTests : LoggedTest
             {
                 (routeHandlerContext, next) => async (context) =>
                 {
-                    context.Parameters[0] = context.Parameters[0] != null ? $"{((string)context.Parameters[0]!)}Prefix" : "NULL";
+                    context.Arguments[0] = context.Arguments[0] != null ? $"{((string)context.Arguments[0]!)}Prefix" : "NULL";
                     return await next(context);
                 }
             }
@@ -4438,12 +4438,12 @@ public class RequestDelegateFactoryTests : LoggedTest
             {
                 (routeHandlerContext, next) => async (context) =>
                 {
-                    context.Parameters[1] = ((int)context.Parameters[1]!) + 2;
+                    context.Arguments[1] = ((int)context.Arguments[1]!) + 2;
                     return await next(context);
                 },
                 (routeHandlerContext, next) => async (context) =>
                 {
-                    foreach (var parameter in context.Parameters)
+                    foreach (var parameter in context.Arguments)
                     {
                         Log(parameter!.ToString() ?? "no arg");
                     }
@@ -4492,7 +4492,7 @@ public class RequestDelegateFactoryTests : LoggedTest
                     {
                         if (isInt)
                         {
-                            context.Parameters[1] = ((int)context.Parameters[1]!) + 2;
+                            context.Arguments[1] = ((int)context.Arguments[1]!) + 2;
                             return await next(context);
                         }
                         return "Is not an int.";
@@ -4592,9 +4592,9 @@ public class RequestDelegateFactoryTests : LoggedTest
             {
                 (routeHandlerContext, next) => async (context) =>
                 {
-                    Todo originalTodo = (Todo)context.Parameters[0]!;
+                    Todo originalTodo = (Todo)context.Arguments[0]!;
                     originalTodo!.IsComplete = !originalTodo.IsComplete;
-                    context.Parameters[0] = originalTodo;
+                    context.Arguments[0] = originalTodo;
                     return await next(context);
                 }
             }
@@ -4685,7 +4685,8 @@ public class RequestDelegateFactoryTests : LoggedTest
                 },
                 (RouteHandlerContext, next) => async (context) =>
                 {
-                    context.Parameters[0] = context.Parameters[0] != null ? $"{((string)context.Parameters[0]!)}Prefix" : "NULL";
+                    var newValue = $"{context.GetArgument<string>(0)}Prefix";
+                    context.Arguments[0] = newValue;
                     return await next(context);
                 }
             }
@@ -4696,6 +4697,353 @@ public class RequestDelegateFactoryTests : LoggedTest
         // Assert
         var responseBody = Encoding.UTF8.GetString(responseBodyStream.ToArray());
         Assert.Equal("HELLO, TESTNAMEPREFIX!", responseBody);
+    }
+
+    public static object[][] TaskOfTMethods
+    {
+        get
+        {
+            Task<string> TaskOfTMethod()
+            {
+                return Task.FromResult("foo");
+            }
+
+            async Task<string> TaskOfTWithYieldMethod()
+            {
+                await Task.Yield();
+                return "foo";
+            }
+
+            async Task<object> TaskOfObjectWithYieldMethod()
+            {
+                await Task.Yield();
+                return "foo";
+            }
+
+            return new object[][]
+            {
+                new object[] { (Func<Task<string>>)TaskOfTMethod },
+                new object[] { (Func<Task<string>>)TaskOfTWithYieldMethod },
+                new object[] { (Func<Task<object>>)TaskOfObjectWithYieldMethod }
+            };
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(TaskOfTMethods))]
+    public async Task CanInvokeFilter_OnTaskOfTReturningHandler(Delegate @delegate)
+    {
+        // Arrange
+        var responseBodyStream = new MemoryStream();
+        var httpContext = CreateHttpContext();
+        httpContext.Response.Body = responseBodyStream;
+
+        // Act
+        var factoryResult = RequestDelegateFactory.Create(@delegate, new RequestDelegateFactoryOptions()
+        {
+            RouteHandlerFilterFactories = new List<Func<RouteHandlerContext, RouteHandlerFilterDelegate, RouteHandlerFilterDelegate>>()
+            {
+                (routeHandlerContext, next) => async (context) =>
+                {
+                    return await next(context);
+                }
+            }
+        });
+        var requestDelegate = factoryResult.RequestDelegate;
+        await requestDelegate(httpContext);
+
+        Assert.Equal(200, httpContext.Response.StatusCode);
+        var decodedResponseBody = Encoding.UTF8.GetString(responseBodyStream.ToArray());
+        Assert.Equal("foo", decodedResponseBody);
+    }
+
+    public static object[][] ValueTaskOfTMethods
+    {
+        get
+        {
+            ValueTask<string> ValueTaskOfTMethod()
+            {
+                return ValueTask.FromResult("foo");
+            }
+
+            async ValueTask<string> ValueTaskOfTWithYieldMethod()
+            {
+                await Task.Yield();
+                return "foo";
+            }
+
+            async ValueTask<object> ValueTaskOfObjectWithYield()
+            {
+                await Task.Yield();
+                return "foo";
+            }
+
+            return new object[][]
+            {
+                new object[] { (Func<ValueTask<string>>)ValueTaskOfTMethod },
+                new object[] { (Func<ValueTask<string>>)ValueTaskOfTWithYieldMethod },
+                new object[] { (Func<ValueTask<object>>)ValueTaskOfObjectWithYield }
+            };
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(ValueTaskOfTMethods))]
+    public async Task CanInvokeFilter_OnValueTaskOfTReturningHandler(Delegate @delegate)
+    {
+        // Arrange
+        var responseBodyStream = new MemoryStream();
+        var httpContext = CreateHttpContext();
+        httpContext.Response.Body = responseBodyStream;
+
+        // Act
+        var factoryResult = RequestDelegateFactory.Create(@delegate, new RequestDelegateFactoryOptions()
+        {
+            RouteHandlerFilterFactories = new List<Func<RouteHandlerContext, RouteHandlerFilterDelegate, RouteHandlerFilterDelegate>>()
+            {
+                (routeHandlerContext, next) => async (context) =>
+                {
+                    return await next(context);
+                }
+            }
+        });
+        var requestDelegate = factoryResult.RequestDelegate;
+        await requestDelegate(httpContext);
+
+        Assert.Equal(200, httpContext.Response.StatusCode);
+        var decodedResponseBody = Encoding.UTF8.GetString(responseBodyStream.ToArray());
+        Assert.Equal("foo", decodedResponseBody);
+    }
+
+    public static object[][] VoidReturningMethods
+    {
+        get
+        {
+            void VoidMethod() { }
+
+            ValueTask ValueTaskMethod()
+            {
+                return ValueTask.CompletedTask;
+            }
+
+            Task TaskMethod()
+            {
+                return Task.CompletedTask;
+            }
+
+            async ValueTask ValueTaskWithYieldMethod()
+            {
+                await Task.Yield();
+            }
+
+            async Task TaskWithYieldMethod()
+            {
+                await Task.Yield();
+            }
+
+            return new object[][]
+            {
+                new object[] { (Action)VoidMethod },
+                new object[] { (Func<ValueTask>)ValueTaskMethod },
+                new object[] { (Func<Task>)TaskMethod },
+                new object[] { (Func<ValueTask>)ValueTaskWithYieldMethod },
+                new object[] { (Func<Task>)TaskWithYieldMethod}
+            };
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(VoidReturningMethods))]
+    public async Task CanInvokeFilter_OnVoidReturningHandler(Delegate @delegate)
+    {
+        // Arrange
+        var responseBodyStream = new MemoryStream();
+        var httpContext = CreateHttpContext();
+        httpContext.Response.Body = responseBodyStream;
+
+        // Act
+        var factoryResult = RequestDelegateFactory.Create(@delegate, new RequestDelegateFactoryOptions()
+        {
+            RouteHandlerFilterFactories = new List<Func<RouteHandlerContext, RouteHandlerFilterDelegate, RouteHandlerFilterDelegate>>()
+            {
+                (routeHandlerContext, next) => async (context) =>
+                {
+                    return await next(context);
+                }
+            }
+        });
+        var requestDelegate = factoryResult.RequestDelegate;
+        await requestDelegate(httpContext);
+
+        Assert.Equal(200, httpContext.Response.StatusCode);
+        var decodedResponseBody = Encoding.UTF8.GetString(responseBodyStream.ToArray());
+        Assert.Equal(String.Empty, decodedResponseBody);
+    }
+
+    [Fact]
+    public async Task CanInvokeFilter_OnTaskModifyingHttpContext()
+    {
+        // Arrange
+        var tcs = new TaskCompletionSource();
+        async Task HandlerWithTaskAwait(HttpContext c)
+        {
+            await tcs.Task;
+            await Task.Yield();
+            c.Response.StatusCode = 400;
+        };
+        var responseBodyStream = new MemoryStream();
+        var httpContext = CreateHttpContext();
+        httpContext.Response.Body = responseBodyStream;
+
+        // Act
+        var factoryResult = RequestDelegateFactory.Create(HandlerWithTaskAwait, new RequestDelegateFactoryOptions()
+        {
+            RouteHandlerFilterFactories = new List<Func<RouteHandlerContext, RouteHandlerFilterDelegate, RouteHandlerFilterDelegate>>()
+            {
+                (routeHandlerContext, next) => async (context) =>
+                {
+                    return await next(context);
+                }
+            }
+        });
+
+        var requestDelegate = factoryResult.RequestDelegate;
+        var request = requestDelegate(httpContext);
+        tcs.TrySetResult();
+        await request;
+
+        Assert.Equal(400, httpContext.Response.StatusCode);
+        var decodedResponseBody = Encoding.UTF8.GetString(responseBodyStream.ToArray());
+        Assert.Equal(string.Empty, decodedResponseBody);
+    }
+
+    public static object[][] TasksOfTypesMethods
+    {
+        get
+        {
+            ValueTask<TodoStruct> ValueTaskOfStructMethod()
+            {
+                return ValueTask.FromResult(new TodoStruct {  Name = "Test todo"});
+            }
+
+            async ValueTask<TodoStruct> ValueTaskOfStructWithYieldMethod()
+            {
+                await Task.Yield();
+                return new TodoStruct {  Name = "Test todo" };
+            }
+
+            Task<TodoStruct> TaskOfStructMethod()
+            {
+                return Task.FromResult(new TodoStruct { Name = "Test todo" });
+            }
+
+            async Task<TodoStruct> TaskOfStructWithYieldMethod()
+            {
+                await Task.Yield();
+                return new TodoStruct { Name = "Test todo" };
+            }
+
+            return new object[][]
+            {
+                new object[] { (Func<ValueTask<TodoStruct>>)ValueTaskOfStructMethod },
+                new object[] { (Func<ValueTask<TodoStruct>>)ValueTaskOfStructWithYieldMethod },
+                new object[] { (Func<Task<TodoStruct>>)TaskOfStructMethod },
+                new object[] { (Func<Task<TodoStruct>>)TaskOfStructWithYieldMethod }
+            };
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(TasksOfTypesMethods))]
+    public async Task CanInvokeFilter_OnHandlerReturningTasksOfStruct(Delegate @delegate)
+    {
+        // Arrange
+        var responseBodyStream = new MemoryStream();
+        var httpContext = CreateHttpContext();
+        httpContext.Response.Body = responseBodyStream;
+
+        // Act
+        var factoryResult = RequestDelegateFactory.Create(@delegate, new RequestDelegateFactoryOptions()
+        {
+            RouteHandlerFilterFactories = new List<Func<RouteHandlerContext, RouteHandlerFilterDelegate, RouteHandlerFilterDelegate>>()
+            {
+                (routeHandlerContext, next) => async (context) =>
+                {
+                    return await next(context);
+                }
+            }
+        });
+        var requestDelegate = factoryResult.RequestDelegate;
+        await requestDelegate(httpContext);
+
+        Assert.Equal(200, httpContext.Response.StatusCode);
+        var deserializedResponseBody = JsonSerializer.Deserialize<TodoStruct>(responseBodyStream.ToArray(), new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        });
+        Assert.Equal("Test todo", deserializedResponseBody.Name);
+    }
+
+    [Fact]
+    public async Task RequestDelegateFactory_CanApplyFiltersOnHandlerWithManyArguments()
+    {
+        // Arrange
+        string HelloName(int? one, string? two, int? three, string? four, int? five, bool? six, string? seven, string? eight, int? nine, string? ten, int? eleven)
+        {
+            return "Too many arguments!";
+        };
+
+        var httpContext = CreateHttpContext();
+
+        var responseBodyStream = new MemoryStream();
+        httpContext.Response.Body = responseBodyStream;
+
+        // Act
+        var factoryResult = RequestDelegateFactory.Create(HelloName, new RequestDelegateFactoryOptions()
+        {
+            RouteHandlerFilterFactories = new List<Func<RouteHandlerContext, RouteHandlerFilterDelegate, RouteHandlerFilterDelegate>>()
+            {
+                (routeHandlerContext, next) => async (context) =>
+                {
+                    Assert.IsType<DefaultRouteHandlerInvocationContext>(context);
+                    Assert.Equal(11, context.Arguments.Count);
+                    return await next(context);
+                }
+            }
+        });
+        var requestDelegate = factoryResult.RequestDelegate;
+        await requestDelegate(httpContext);
+    }
+
+    [Fact]
+    public async Task RequestDelegateFactory_CanApplyFiltersOnHandlerWithNoArguments()
+    {
+        // Arrange
+        string HelloName()
+        {
+            return "No arguments!";
+        };
+
+        var httpContext = CreateHttpContext();
+
+        var responseBodyStream = new MemoryStream();
+        httpContext.Response.Body = responseBodyStream;
+
+        // Act
+        var factoryResult = RequestDelegateFactory.Create(HelloName, new RequestDelegateFactoryOptions()
+        {
+            RouteHandlerFilterFactories = new List<Func<RouteHandlerContext, RouteHandlerFilterDelegate, RouteHandlerFilterDelegate>>()
+            {
+                (routeHandlerContext, next) => async (context) =>
+                {
+                    Assert.IsType<DefaultRouteHandlerInvocationContext>(context);
+                    Assert.Equal(0, context.Arguments.Count);
+                    return await next(context);
+                }
+            }
+        });
+        var requestDelegate = factoryResult.RequestDelegate;
+        await requestDelegate(httpContext);
     }
 
     [Fact]
@@ -4797,10 +5145,80 @@ public class RequestDelegateFactoryTests : LoggedTest
     }
 
     [Fact]
+    public void Create_DiscoversEndpointMetadata_FromTaskWrappedReturnTypeImplementingIEndpointMetadataProvider()
+    {
+        // Arrange
+        var @delegate = () => Task.FromResult(new AddsCustomEndpointMetadataResult());
+
+        // Act
+        var result = RequestDelegateFactory.Create(@delegate);
+
+        // Assert
+        Assert.Contains(result.EndpointMetadata, m => m is CustomEndpointMetadata { Source: MetadataSource.ReturnType });
+    }
+
+    [Fact]
+    public void Create_DiscoversEndpointMetadata_FromValueTaskWrappedReturnTypeImplementingIEndpointMetadataProvider()
+    {
+        // Arrange
+        var @delegate = () => ValueTask.FromResult(new AddsCustomEndpointMetadataResult());
+
+        // Act
+        var result = RequestDelegateFactory.Create(@delegate);
+
+        // Assert
+        Assert.Contains(result.EndpointMetadata, m => m is CustomEndpointMetadata { Source: MetadataSource.ReturnType });
+    }
+
+    [Fact]
     public void Create_CombinesDefaultMetadata_AndMetadataFromReturnTypesImplementingIEndpointMetadataProvider()
     {
         // Arrange
         var @delegate = () => new CountsDefaultEndpointMetadataResult();
+        var options = new RequestDelegateFactoryOptions
+        {
+            InitialEndpointMetadata = new List<object>
+            {
+                new CustomEndpointMetadata { Source = MetadataSource.Caller }
+            }
+        };
+
+        // Act
+        var result = RequestDelegateFactory.Create(@delegate, options);
+
+        // Assert
+        Assert.Contains(result.EndpointMetadata, m => m is CustomEndpointMetadata { Source: MetadataSource.Caller });
+        // Expecting '2' as only MethodInfo and initial metadata will be in the metadata list when this metadata item is added
+        Assert.Contains(result.EndpointMetadata, m => m is DefaultMetadataCountMetadata { Count: 2 });
+    }
+
+    [Fact]
+    public void Create_CombinesDefaultMetadata_AndMetadataFromTaskWrappedReturnTypesImplementingIEndpointMetadataProvider()
+    {
+        // Arrange
+        var @delegate = () => Task.FromResult(new CountsDefaultEndpointMetadataResult());
+        var options = new RequestDelegateFactoryOptions
+        {
+            InitialEndpointMetadata = new List<object>
+            {
+                new CustomEndpointMetadata { Source = MetadataSource.Caller }
+            }
+        };
+
+        // Act
+        var result = RequestDelegateFactory.Create(@delegate, options);
+
+        // Assert
+        Assert.Contains(result.EndpointMetadata, m => m is CustomEndpointMetadata { Source: MetadataSource.Caller });
+        // Expecting '2' as only MethodInfo and initial metadata will be in the metadata list when this metadata item is added
+        Assert.Contains(result.EndpointMetadata, m => m is DefaultMetadataCountMetadata { Count: 2 });
+    }
+
+    [Fact]
+    public void Create_CombinesDefaultMetadata_AndMetadataFromValueTaskWrappedReturnTypesImplementingIEndpointMetadataProvider()
+    {
+        // Arrange
+        var @delegate = () => ValueTask.FromResult(new CountsDefaultEndpointMetadataResult());
         var options = new RequestDelegateFactoryOptions
         {
             InitialEndpointMetadata = new List<object>
@@ -4901,6 +5319,32 @@ public class RequestDelegateFactoryTests : LoggedTest
     {
         // Arrange
         var @delegate = (Todo todo) => new RemovesAcceptsMetadataResult();
+
+        // Act
+        var result = RequestDelegateFactory.Create(@delegate);
+
+        // Assert
+        Assert.DoesNotContain(result.EndpointMetadata, m => m is IAcceptsMetadata);
+    }
+
+    [Fact]
+    public void Create_AllowsRemovalOfDefaultMetadata_ByTaskWrappedReturnTypesImplementingIEndpointMetadataProvider()
+    {
+        // Arrange
+        var @delegate = (Todo todo) => Task.FromResult(new RemovesAcceptsMetadataResult());
+
+        // Act
+        var result = RequestDelegateFactory.Create(@delegate);
+
+        // Assert
+        Assert.DoesNotContain(result.EndpointMetadata, m => m is IAcceptsMetadata);
+    }
+
+    [Fact]
+    public void Create_AllowsRemovalOfDefaultMetadata_ByValueTaskWrappedReturnTypesImplementingIEndpointMetadataProvider()
+    {
+        // Arrange
+        var @delegate = (Todo todo) => ValueTask.FromResult(new RemovesAcceptsMetadataResult());
 
         // Act
         var result = RequestDelegateFactory.Create(@delegate);
