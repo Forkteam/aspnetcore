@@ -2,10 +2,12 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -180,11 +182,52 @@ public static class Program
                     return 0;
                 }
 #endif
+            case "PreloadHostedService":
+                {
+                    var host = new WebHostBuilder()
+                        .ConfigureServices(services =>
+                        {
+                            services.AddSingleton<IHostedService, PreloadHostedService>();
+                        })
+                        .ConfigureLogging((_, factory) =>
+                        {
+                            factory.AddConsole();
+                            factory.AddFilter("Console", level => level >= LogLevel.Information);
+                        })
+                        .UseKestrel()
+                        .UseIIS()
+                        .UseIISIntegration()
+                        .UseStartup<Startup>()
+                        .Build();
+
+                    host.Run();
+                    return 0;
+                }
+
             default:
                 return StartServer();
 
         }
         return 12;
+    }
+
+    private class PreloadHostedService : IHostedService
+    {
+        public Task StartAsync(CancellationToken cancellationToken)
+        {
+            File.WriteAllText("Preload_Started.txt", "");
+            Console.Error.WriteLine("Started preload hosted service...");
+            Console.Error.Flush();
+            return Task.CompletedTask;
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken)
+        {
+            File.WriteAllText("Preload_Stopped.txt", "");
+            Console.Error.WriteLine("Stopped preload hosted service...");
+            Console.Error.Flush();
+            return Task.CompletedTask;
+        }
     }
 
     private static int StartServer()
