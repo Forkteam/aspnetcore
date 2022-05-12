@@ -462,7 +462,7 @@ public class AuthorizeFilterTest
 
     [Theory]
     [MemberData(nameof(AuthorizeFiltersCreatedWithoutPolicyOrPolicyProvider))]
-    public void CreateInstance_ReturnsNewFilterIfPolicyAndPolicyProviderAreNotSet(AuthorizeFilter authorizeFilter)
+    public void CreateInstance_ReturnsSelfFilterIfPolicyAndPolicyProviderAreNotSet(AuthorizeFilter authorizeFilter)
     {
         // Arrange
         var factory = (IFilterFactory)authorizeFilter;
@@ -481,14 +481,13 @@ public class AuthorizeFilterTest
         var result = factory.CreateInstance(serviceProvider);
 
         // Assert
-        Assert.NotSame(authorizeFilter, result);
-        var actual = Assert.IsType<AuthorizeFilter>(result);
-        Assert.NotNull(actual.Policy);
+        Assert.Same(authorizeFilter, result);
+        Assert.NotNull(authorizeFilter.Policy);
     }
 
     [Theory]
     [MemberData(nameof(AuthorizeFiltersCreatedWithoutPolicyOrPolicyProvider))]
-    public void CreateInstance_ReturnsNewFilterIfPolicyAndPolicyProviderAreNotSetAndCustomProviderIsUsed(
+    public void CreateInstance_ReturnsSelfIfPolicyAndPolicyProviderAreNotSetAndCustomProviderIsUsed(
         AuthorizeFilter authorizeFilter)
     {
         // Arrange
@@ -502,9 +501,87 @@ public class AuthorizeFilterTest
         var result = factory.CreateInstance(serviceProvider);
 
         // Assert
-        Assert.NotSame(authorizeFilter, result);
-        var actual = Assert.IsType<AuthorizeFilter>(result);
-        Assert.Same(policyProvider, actual.PolicyProvider);
+        Assert.Same(authorizeFilter, result);
+        Assert.Same(policyProvider, authorizeFilter.PolicyProvider);
+    }
+
+    public class OverriddenAuthorizeFilter : AuthorizeFilter
+    {
+        public OverriddenAuthorizeFilter()
+            : base()
+        {
+        }
+
+        public OverriddenAuthorizeFilter(AuthorizationPolicy policy)
+            : base(policy)
+        {
+        }
+
+        public OverriddenAuthorizeFilter(IAuthorizationPolicyProvider policyProvider, IEnumerable<IAuthorizeData> authorizeData)
+            : base(policyProvider, authorizeData)
+        {
+        }
+
+        public Exception OnAuthorizeAsyncException { get; set; }
+
+        public override Task OnAuthorizationAsync(AuthorizationFilterContext context)
+        {
+            throw OnAuthorizeAsyncException;
+        }
+    }
+
+    [Fact]
+    public async Task CreateInstance_AllowsOverridingOnAuthorizeAsyncIfPolicyAndPolicyProviderAreNotSet()
+    {
+        var authorizeFilter = new OverriddenAuthorizeFilter
+        {
+            OnAuthorizeAsyncException = new Exception(),
+        };
+
+        // The serviceProvider still must contain a policy provider if no policy
+        // or policy provider was provided to the filter constructor.
+        var policyProvider = Mock.Of<IAuthorizationPolicyProvider>();
+        var serviceProvider = new ServiceCollection()
+            .AddSingleton(policyProvider)
+            .BuildServiceProvider();
+
+        var factory = (IFilterFactory)authorizeFilter;
+        var result = factory.CreateInstance(serviceProvider);
+        var filterFromFactory = Assert.IsAssignableFrom<AuthorizeFilter>(result);
+
+        var context = new AuthorizationFilterContext(ActionContext, new[] { authorizeFilter });
+        var ex = await Assert.ThrowsAsync<Exception>(() => filterFromFactory.OnAuthorizationAsync(context));
+
+        Assert.Same(authorizeFilter.OnAuthorizeAsyncException, ex);
+    }
+
+    public static TheoryData OverriddenAuthorizeFiltersCreatedWithPolicyOrPolicyProvider
+    {
+        get
+        {
+            return new TheoryData<OverriddenAuthorizeFilter>
+            {
+                new OverriddenAuthorizeFilter(new AuthorizationPolicyBuilder().RequireAssertion(_ => true).Build()),
+                new OverriddenAuthorizeFilter(Mock.Of<IAuthorizationPolicyProvider>(), Enumerable.Empty<IAuthorizeData>()),
+            };
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(OverriddenAuthorizeFiltersCreatedWithPolicyOrPolicyProvider))]
+    public async Task CreateInstance_AllowsOverridingOnAuthorizeAsyncIfPolicyOrPolicyProviderAreSet(OverriddenAuthorizeFilter authorizeFilter)
+    {
+        authorizeFilter.OnAuthorizeAsyncException = new Exception();
+        var factory = (IFilterFactory)authorizeFilter;
+
+        // The serviceProvider argument shouldn't be necessary when an AuthorizeFilter is constructed with a policy or policy provider.
+        var result = factory.CreateInstance(serviceProvider: null);
+        var filterFromFactory = Assert.IsAssignableFrom<AuthorizeFilter>(result);
+
+        var context = new AuthorizationFilterContext(ActionContext, new[] { authorizeFilter });
+        var ex = await Assert.ThrowsAsync<Exception>(() => filterFromFactory.OnAuthorizationAsync(context));
+
+        Assert.Same(authorizeFilter.OnAuthorizeAsyncException, ex);
     }
 
     [Fact]

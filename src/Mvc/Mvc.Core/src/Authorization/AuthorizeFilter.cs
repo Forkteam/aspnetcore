@@ -84,7 +84,7 @@ public class AuthorizeFilter : IAsyncAuthorizationFilter, IFilterFactory
     /// <summary>
     /// The <see cref="IAuthorizationPolicyProvider"/> to use to resolve policy names.
     /// </summary>
-    public IAuthorizationPolicyProvider? PolicyProvider { get; }
+    public IAuthorizationPolicyProvider? PolicyProvider { get; private set; }
 
     /// <summary>
     /// The <see cref="IAuthorizeData"/> to combine into an <see cref="IAuthorizeData"/>.
@@ -98,7 +98,7 @@ public class AuthorizeFilter : IAsyncAuthorizationFilter, IFilterFactory
     /// If<c>null</c>, the policy will be constructed using
     /// <see cref="AuthorizationPolicy.CombineAsync(IAuthorizationPolicyProvider, IEnumerable{IAuthorizeData})"/>.
     /// </remarks>
-    public AuthorizationPolicy? Policy { get; }
+    public AuthorizationPolicy? Policy { get; private set; }
 
     bool IFilterFactory.IsReusable => true;
 
@@ -204,15 +204,24 @@ public class AuthorizeFilter : IAsyncAuthorizationFilter, IFilterFactory
 
     IFilterMetadata IFilterFactory.CreateInstance(IServiceProvider serviceProvider)
     {
-        if (Policy != null || PolicyProvider != null)
+        if (Policy is null && PolicyProvider is null)
         {
-            // The filter is fully constructed. Use the current instance to authorize.
-            return this;
+            // REVIEW: Can serviceProvider ever change here? Can this ever be called in parallel?
+            // We mutate the existing object instead of returning a new one so OnAuthorizationAsync can still be overridden.
+            // See https://github.com/dotnet/aspnetcore/issues/30025
+            Debug.Assert(AuthorizeData != null);
+            var policyProvider = serviceProvider.GetRequiredService<IAuthorizationPolicyProvider>();
+
+            Policy = AuthorizationApplicationModelProvider.GetPolicyIfDefaultProvider(policyProvider, AuthorizeData);
+
+            if (Policy is null)
+            {
+                PolicyProvider = policyProvider;
+            }
         }
 
-        Debug.Assert(AuthorizeData != null);
-        var policyProvider = serviceProvider.GetRequiredService<IAuthorizationPolicyProvider>();
-        return AuthorizationApplicationModelProvider.GetFilter(policyProvider, AuthorizeData);
+        // The filter is fully constructed. Always use the current instance to call overridden OnAuthorizationAsync methods.
+        return this;
     }
 
     private static bool HasAllowAnonymous(AuthorizationFilterContext context)
