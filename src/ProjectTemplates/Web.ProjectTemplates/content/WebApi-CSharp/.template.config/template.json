@@ -374,8 +374,7 @@
     },
     "EnableOpenAPI": {
       "type": "computed",
-      "value": "(!DisableOpenAPI)",
-      "description": "Enable OpenAPI (Swagger) support"
+      "value": "(!DisableOpenAPI)"
     },
     "UseControllers": {
       "type": "computed",
