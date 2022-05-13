@@ -1878,7 +1878,7 @@ public class Http2ConnectionTests : Http2TestBase
             {
                 requestAbortedTcs.SetException(ex);
             }
-        }).DefaultTimeout();
+        });
 
         await StartStreamAsync(1, _browserRequestHeaders, endStream: true).DefaultTimeout();
 
