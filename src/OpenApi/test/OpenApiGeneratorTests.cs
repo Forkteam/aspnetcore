@@ -1,8 +1,10 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using System.Linq.Expressions;
 using System.Reflection;
 using System.Security.Claims;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Mvc;
@@ -47,6 +49,32 @@ public class OpenApiOperationGeneratorTests
         var tag = Assert.Single(operation.Tags);
 
         Assert.Equal(declaringTypeName, tag.Name);
+    }
+
+    [Fact]
+    public void UsesTagsFromMultipleCallsToWithTags()
+    {
+        var testBuilder = new TestEndpointConventionBuilder();
+        var routeHandlerBuilder = new RouteHandlerBuilder(new[] { testBuilder });
+
+        routeHandlerBuilder
+            .WithTags("A")
+            .WithTags("B");
+
+        var operation = GetOpenApiOperation(() => { }, additionalMetadata: testBuilder.Metadata.ToArray());
+
+        Assert.Collection(operation.Tags,
+            tag => Assert.Equal("A", tag.Name),
+            tag => Assert.Equal("B", tag.Name));
+    }
+
+    [Fact]
+    public void ThrowsInvalidOperationExceptionGivenUnnamedParameter()
+    {
+        var unnamedParameter = Expression.Parameter(typeof(int));
+        var lambda = Expression.Lambda(Expression.Block(), unnamedParameter);
+        var ex = Assert.Throws<InvalidOperationException>(() => GetOpenApiOperation(lambda.Compile()));
+        Assert.Equal("Encountered a parameter of type 'System.Runtime.CompilerServices.Closure' without a name. Parameters must have a name.", ex.Message);
     }
 
     [Fact]
@@ -357,13 +385,13 @@ public class OpenApiOperationGeneratorTests
     [Fact]
     public void AddsMultipleParametersFromParametersAttribute()
     {
-        static void AssertParameters(OpenApiOperation operation)
+        static void AssertParameters(OpenApiOperation operation, string capturedName = "Foo")
         {
             Assert.Collection(
                 operation.Parameters,
                 param =>
                 {
-                    Assert.Equal("Foo", param.Name);
+                    Assert.Equal(capturedName, param.Name);
                     Assert.Equal("integer", param.Schema.Type);
                     Assert.Equal(ParameterLocation.Path, param.In);
                     Assert.True(param.Required);
@@ -391,7 +419,7 @@ public class OpenApiOperationGeneratorTests
         AssertParameters(GetOpenApiOperation(([AsParameters] ArgumentListRecord req) => { }));
         AssertParameters(GetOpenApiOperation(([AsParameters] ArgumentListRecordStruct req) => { }));
         AssertParameters(GetOpenApiOperation(([AsParameters] ArgumentListRecordWithoutPositionalParameters req) => { }));
-        AssertParameters(GetOpenApiOperation(([AsParameters] ArgumentListRecordWithoutAttributes req) => { }, "/{foo}"));
+        AssertParameters(GetOpenApiOperation(([AsParameters] ArgumentListRecordWithoutAttributes req) => { }, "/{foo}"), "foo");
         AssertParameters(GetOpenApiOperation(([AsParameters] ArgumentListRecordWithoutAttributes req) => { }, "/{Foo}"));
     }
 
@@ -769,6 +797,39 @@ public class OpenApiOperationGeneratorTests
         Assert.Equal("A summary", operation.Summary);
     }
 
+    // Test case for https://github.com/dotnet/aspnetcore/issues/41622
+    [Fact]
+    public void HandlesEndpointWithMultipleResponses()
+    {
+        var operation = GetOpenApiOperation(() => TypedResults.Ok(new InferredJsonClass()),
+            additionalMetadata: new[]
+            {
+                // Metadata added by the `IEndpointMetadataProvider` on `TypedResults.Ok`
+                new ProducesResponseTypeMetadata(StatusCodes.Status200OK),
+                // Metadata added by the `Produces<Type>` extension method
+                new ProducesResponseTypeMetadata(typeof(InferredJsonClass), StatusCodes.Status200OK, "application/json"),
+            });
+
+        var response = Assert.Single(operation.Responses);
+        var content = Assert.Single(response.Value.Content);
+        Assert.Equal("object", content.Value.Schema.Type);
+        Assert.Equal("200", response.Key);
+        Assert.Equal("application/json", content.Key);
+
+    }
+
+    [Theory]
+    [InlineData("/todos/{id}", "id")]
+    [InlineData("/todos/{Id}", "Id")]
+    [InlineData("/todos/{id:minlen(2)}", "id")]
+    public void FavorsParameterCasingInRoutePattern(string pattern, string expectedName)
+    {
+        var operation = GetOpenApiOperation((int Id) => "", pattern);
+
+        var param = Assert.Single(operation.Parameters);
+        Assert.Equal(expectedName, param.Name);
+    }
+
     private static OpenApiOperation GetOpenApiOperation(
         Delegate action,
         string pattern = null,
@@ -879,5 +940,18 @@ public class OpenApiOperationGeneratorTests
         public int Bar { get; set; }
         public InferredJsonClass FromBody { get; set; }
         public HttpContext Context { get; set; }
+    }
+
+    private class TestEndpointConventionBuilder : EndpointBuilder, IEndpointConventionBuilder
+    {
+        public void Add(Action<EndpointBuilder> convention)
+        {
+            convention(this);
+        }
+
+        public override Endpoint Build()
+        {
+            throw new NotImplementedException();
+        }
     }
 }

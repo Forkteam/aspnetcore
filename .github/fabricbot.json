@@ -1533,6 +1533,7 @@
             "src/Mvc/Mvc.Testing.Tasks/src/",
             "src/Mvc/Mvc.Testing/",
             "src/Mvc/Mvc/",
+            "src/OpenApi/",
             "src/Mvc/perf/"
           ]
         }
@@ -2552,7 +2553,7 @@
         {
           "name": "addMilestone",
           "parameters": {
-            "milestoneName": "7.0-preview5"
+            "milestoneName": "7.0-preview6"
           }
         }
       ],
